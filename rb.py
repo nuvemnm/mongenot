@@ -18,7 +18,7 @@ SERIAL_PATH = '/dev/ttyS0'
 BAUDRATE = 9600
 while True:
     try:
-        ser = serial.Serial(SERIAL_PATH, BAUDRATE, timeout=0)
+        ser = serial.Serial('/dev/ttyS0', 9600, timeout=0)
         break
     except Exception:
         pass
@@ -28,22 +28,23 @@ mission2_proc = None
 processo_camera = None
 
 # caminho do script de missão 2 (ajuste se necessário)
-MISSao2_PATH = '/mnt/data/missao2.py'
+diretorio = '/home/user/mongenot'
+missao_path = '/home/user/mongenot/mission.py'
+ais_path = '/home/user/mongenot/missao2.py'
 
-# PATH do codigo do AIS
+missao_um = '/home/user/mongenot/first_mission.py'
+missao_dois = '/home/user/mongenot/second_mission.py'
 
-
-diretorio = '/home/pi/meu_projeto/dados'
+diretorio = '/home/user/mongenot'
 #PATH do csv do codigo de AIS
 
 nome_arquivo = 'leituras.csv'
+nome_arquivo_ais = 'ais_log.csv'
 #arquivo csv do AIS
 
-caminho_completo = os.path.join(diretorio, nome_arquivo)
-caminho_completo = os.path.join(diretorio, nome_arquivo)
+caminho_completo_missao = os.path.join(diretorio, nome_arquivo)
+caminho_completo_ais = os.path.join(diretorio, nome_arquivo_ais)
 
-df_video = pd.read_csv(caminho_completo, delimiter=';')
-df_ais = pd.read_csv(caminho_completo, delimiter=';')
 
 
 # ---------------------------
@@ -71,12 +72,12 @@ def start_mission2_subprocess(timestamp_inicio):
     global mission2_proc
     if mission2_proc is not None:
         return False
-    if not os.path.exists(MISSao2_PATH):
+    if not os.path.exists(missao_path):
         send_data_to_serial('ERR_M2_NOFILE')
         return False
-    try:    
+    try:
         # Passa o timestamp de inicio como argumento para o script de processamento
-        mission2_proc = subprocess.Popen(['python3', MISSao2_PATH, str(timestamp_inicio)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        mission2_proc = subprocess.Popen(['python3', missao_path, str(timestamp_inicio)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         saida_texto, erros = mission2_proc.communicate()
         return saida_texto
     except Exception:
@@ -114,7 +115,10 @@ def calcular_diferenca_graus(lon1, lat1, lon2, lat2):
 # ---------------------------
 # Lógica de Correlação (Interpolada por Frame)
 # ---------------------------
-def encontrar_mmsi(timestamp_inicio_video, df_video, df_ais):
+def encontrar_mmsi(timestamp_inicio_video, caminho_video, caminho_ais):
+    df_video = pd.read_csv(caminho_video, delimiter=';')
+    df_ais = pd.read_csv(caminho_ais, delimiter=';')
+
     candidatos_mmsi = []
     FPS = 30.0 # Deve ser o mesmo usado na gravação
 
@@ -124,6 +128,9 @@ def encontrar_mmsi(timestamp_inicio_video, df_video, df_ais):
         print("Erro: Coluna 'frame' não encontrada no CSV do vídeo.")
         return "Erro CSV Video"
 
+    primeira_linha = df_video.iloc[0]
+    lat = primeira_linha['lat']
+    long = primeira_linha['long']
     # 1. Iterar por linhas do vídeo (Amostragem ::10 para performance)
     for index, row in df_video.iterrows():
         try:
@@ -153,7 +160,7 @@ def encontrar_mmsi(timestamp_inicio_video, df_video, df_ais):
             match = ais_janela.loc[ais_janela['distancia'].idxmin()]
             
             # Tolerância ~500m (0.005 graus)
-            if match['distancia'] < 0.005: 
+            if match['distancia'] < 0.005:
                 candidatos_mmsi.append(int(match['mmsi']))
         except Exception as e:
             continue
@@ -165,7 +172,7 @@ def encontrar_mmsi(timestamp_inicio_video, df_video, df_ais):
     vencedor, votos = contagem.most_common(1)[0]
     
     print(f"MMSI Vencedor: {vencedor} ({votos} votos)")
-    return vencedor
+    return vencedor, lat, long
 # ---------------------------
 # Loop principal (apenas comandos de missão + fila)
 # ---------------------------
@@ -174,61 +181,146 @@ try:
     while True:
         if ser.in_waiting > 0:
             command = ser.readline().decode('utf-8').rstrip()
+            
             if command ==  'V':
                 iniciar_gravacao()
-            
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Video Iniciado")
+
             elif command == 'VS':
                 parar_gravacao()
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Video Encerrado")
                 if mission2_proc is None:
-                    started = start_mission2_subprocess()
-                    
-                    
-                    maior_valor = df_video['area'].max()
+                    started = start_mission2_subprocess() # 'started' é definido aqui
+                    df_video = pd.read_csv(caminho_completo_missao, delimiter=';')
+                    # Atenção: df_video precisa estar definido globalmente ou lido aqui
+                    maior_valor = df_video['area'].max() 
                     resultado = maior_valor
-                    try:
-                        send_data_to_serial(resultado)
-                    except Exception:
-                        pass
+                
+                try:
+                    send_data_to_serial(resultado)
+                except Exception:
+                    pass
+
+                mission2_proc = None
+                
+            elif command == 'VSS':
+                parar_gravacao()
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Video Encerrado")
+                if mission2_proc is None:
+                    mission2_proc = subprocess.Popen(['python3', missao_um], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    saida_texto, erros = mission2_proc.communicate()
+                    resultado = saida_texto # CORRIGIDO: era saida_valor
+                
+                try:
+                    send_data_to_serial(resultado)
+                except Exception:
+                    pass
 
                 mission2_proc = None
 
-            if command == 'VA':
-                ais = subprocess.Popen(['python3', MISSao2_PATH], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            elif command == 'VA':
+                ais = subprocess.Popen(['python3', ais_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Vido e AIS Iniciado")
                 sleep(0.5)
                 inicio_video = time.time()
                 iniciar_gravacao()
-                #inicia codigo AIS
+                # inicia codigo AIS
 
-            
             elif command == 'VAS':
                 parar_gravacao()
-                #encerra codigo AIS
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Video e AIS Encerrados")
+                # encerra codigo AIS
+                
+                # Definindo started como False por padrão para evitar erro, ajuste conforme sua lógica
+                started = False 
+                
                 if mission2_proc is None:
                     tempo_absoluto_evento = start_mission2_subprocess(inicio_video)
-                    df_m2 = pd.read_csv(caminho_completo)
-                    mmsi = encontrar_mmsi(tempo_absoluto_evento, df_video, df_ais)
-                    try:
-                        send_data_to_serial(mmsi)
-                    except Exception:
-                        pass
+                    # CORRIGIDO: mmsi. lat -> mmsi, lat
+                    mmsi, lat, long = encontrar_mmsi(tempo_absoluto_evento, caminho_completo_missao, caminho_completo_ais)
+                    started = True # Supondo que se entrou aqui, iniciou
+
+                mission2_proc = None
+                try:
+                    send_data_to_serial(f"mmsi:{mmsi}, latitude:{lat}, longitude{long}")
+                except Exception:
+                    pass
                     
+                # Lógica para verificar se startou
+                try:
+                    if started:
+                        send_data_to_serial('M2_STARTED')
+                    else:
+                        send_data_to_serial('M2_NOT_STARTED')
+                except Exception:
+                    pass
+                else:
+                    # Este else roda se o try anterior NÃO der erro. 
+                    # Se sua intenção era rodar quando 'started' fosse falso ou algo assim, a lógica do 'else' do try pode estar errada.
+                    # Mantive a estrutura original, mas verifique se é isso mesmo.
                     try:
-                        if started:
-                            send_data_to_serial('M2_STARTED')
-                        else:
-                            send_data_to_serial('M2_NOT_STARTED')
+                        send_data_to_serial('M2_ALREADY_RUNNING')
                     except Exception:
                         pass
+                        
+            elif command == 'VASS':
+                parar_gravacao()
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Video e AIS Encerrados")
+                # encerra codigo AIS
+                
+                started = False # Definindo padrão
+                
+                if mission2_proc is None:
+                    mission2_proc = subprocess.Popen(['python3', missao_dois, str(inicio_video)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    saida_texto, erros = mission2_proc.communicate()
+                    tempo_absoluto_evento = saida_texto
+                    # CORRIGIDO: mmsi. lat -> mmsi, lat
+                    mmsi, lat, long = encontrar_mmsi(tempo_absoluto_evento, caminho_completo_missao, caminho_completo_ais)
+                    started = True
+
+                mission2_proc = None
+                try:
+                    send_data_to_serial(f"mmsi:{mmsi}, latitude:{lat}, longitude{long}")
+                except Exception:
+                    pass
+                    
+                try:
+                    if started:
+                        send_data_to_serial('M2_STARTED')
+                    else:
+                        send_data_to_serial('M2_NOT_STARTED')
+                except Exception:
+                    pass
                 else:
                     try:
                         send_data_to_serial('M2_ALREADY_RUNNING')
                     except Exception:
                         pass
+
+            # CORRIGIDO: Mudado de IF para ELIF e ajustada a indentação
+            elif command == "END":
+                send_data_to_serial("CONF")
+                sleep(0.3)
+                send_data_to_serial("Desligando Raspberry")
+                # Cuidado com 'preexec_fn' em versões novas do Python, pode ser inseguro, mas funciona.
+                end = subprocess.Popen(["sudo", "shutdown", "-h", "now"], preexec_fn=os.setsid) # Melhor passar lista
             
             else:
-                # comportamento idêntico ao código original: salva comando desconhecido na fila
+                # Comportamento para comando desconhecido
                 data_receiver_queue.put(command)
-        sleep(0.1)
+                sleep(0.1)
 except KeyboardInterrupt:
     print('Interrompido por teclado. Saindo...')
 finally:

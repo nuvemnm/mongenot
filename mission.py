@@ -6,8 +6,8 @@ import sys
 import numpy as np
 
 # --- CONFIGURAÇÕES ---
-VIDEO_PATH = "camera_rb.mp4" # Se preferir, troque para original.mp4
-OUTPUT_PATH = "video_tracking_cor_v3.mp4"
+VIDEO_PATH = "video.mp4" # Se preferir, troque para original.mp4
+OUTPUT_PATH = "output.mp4"
 CSV_FILENAME = "leituras.csv" 
 LARGURA_FINAL = 1280
 ALTURA_FINAL = 720

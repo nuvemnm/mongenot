@@ -14,7 +14,7 @@ from ais_decoder import (
 
 print("Iniciando AIS-catcher...")
 ais_process = subprocess.Popen(
-    ["AIS-catcher", "-f", "400.0M", "-u", "127.0.0.1", "10110", "-v", "2", "-o", "5"],
+    ["/home/user/mongenot/AIS-catcher/build/AIS-catcher", "-f", "400000000", "-u", "127.0.0.1", "10110", "-v", "10" ,"-o", "5"],
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL
 )
